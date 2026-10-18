@@ -48,6 +48,21 @@ $("select").onclick = async () => {
   }
 };
 
+$("create").onclick = async () => {
+  const name = $<HTMLInputElement>("newname").value.trim();
+  if (!name) return;
+  current.textContent = "Creating...";
+  log.textContent = "";
+  try {
+    const { repo } = await post<{ repo: string }>("/api/create", { name });
+    repos.add(new Option(repo), 0);
+    repos.value = repo;
+    current.textContent = `Working on ${repo}`;
+  } catch (e) {
+    current.textContent = String(e);
+  }
+};
+
 $("send").onclick = async () => {
   const message = input.value.trim();
   if (!message) return;

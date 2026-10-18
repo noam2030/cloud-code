@@ -1,6 +1,6 @@
 # Code Agent
 
-Minimal web app: pick one of your GitHub repositories, let a Claude-powered agent work on the code, then push when you ask.
+Minimal web app: pick one of your GitHub repositories or create a new one, let a Claude-powered agent work on the code, then push when you ask.
 
 ## Environment variables
 

@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import subprocess
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -45,6 +46,10 @@ class SelectBody(BaseModel):
     full_name: str
 
 
+class CreateBody(BaseModel):
+    name: str
+
+
 class ChatBody(BaseModel):
     message: str
 
@@ -53,14 +58,40 @@ class PushBody(BaseModel):
     message: str = "Update from code agent"
 
 
+def github(path: str, body: dict | None = None):
+    req = urllib.request.Request(
+        f"https://api.github.com{path}",
+        data=json.dumps(body).encode() if body is not None else None,
+        method="POST" if body is not None else "GET",
+        headers={
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github+json",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            return json.load(resp)
+    except urllib.error.HTTPError as exc:
+        raise HTTPException(exc.code, exc.read().decode())
+
+
+def checkout(full_name: str) -> dict:
+    dest = WORKSPACE / full_name.replace("/", "__")
+    shutil.rmtree(dest, ignore_errors=True)
+    WORKSPACE.mkdir(parents=True, exist_ok=True)
+    url = f"https://x-access-token:{GITHUB_TOKEN}@github.com/{full_name}.git"
+    git("clone", url, str(dest), cwd=WORKSPACE)
+    git("config", "user.name", os.environ.get("GIT_USER_NAME", "Code Agent"), cwd=dest)
+    git("config", "user.email", os.environ.get("GIT_USER_EMAIL", "code-agent@users.noreply.github.com"), cwd=dest)
+    state["repo"] = full_name
+    state["agent"] = Agent(dest, full_name)
+    return {"repo": full_name}
+
+
 @app.get("/api/repos")
 def list_repos():
-    req = urllib.request.Request(
-        "https://api.github.com/user/repos?per_page=100&sort=updated",
-        headers={"Authorization": f"Bearer {GITHUB_TOKEN}", "Accept": "application/vnd.github+json"},
-    )
-    with urllib.request.urlopen(req) as resp:
-        repos = json.load(resp)
+    repos = github("/user/repos?per_page=100&sort=updated")
     return [{"full_name": r["full_name"], "default_branch": r["default_branch"]} for r in repos]
 
 
@@ -71,16 +102,14 @@ def status():
 
 @app.post("/api/select")
 def select_repo(body: SelectBody):
-    dest = WORKSPACE / body.full_name.replace("/", "__")
-    shutil.rmtree(dest, ignore_errors=True)
-    WORKSPACE.mkdir(parents=True, exist_ok=True)
-    url = f"https://x-access-token:{GITHUB_TOKEN}@github.com/{body.full_name}.git"
-    git("clone", url, str(dest), cwd=WORKSPACE)
-    git("config", "user.name", os.environ.get("GIT_USER_NAME", "Code Agent"), cwd=dest)
-    git("config", "user.email", os.environ.get("GIT_USER_EMAIL", "code-agent@users.noreply.github.com"), cwd=dest)
-    state["repo"] = body.full_name
-    state["agent"] = Agent(dest, body.full_name)
-    return {"repo": body.full_name}
+    return checkout(body.full_name)
+
+
+@app.post("/api/create")
+def create_repo(body: CreateBody):
+    """Create a new public GitHub repository with an initial commit and start working on it."""
+    repo = github("/user/repos", {"name": body.name, "auto_init": True, "private": False})
+    return checkout(repo["full_name"])
 
 
 @app.post("/api/chat")
