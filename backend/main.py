@@ -1,3 +1,4 @@
+import hmac
 import json
 import os
 import shutil
@@ -5,8 +6,8 @@ import subprocess
 import urllib.request
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -22,10 +23,21 @@ from .agent import Agent  # noqa: E402
 app = FastAPI()
 
 GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
+APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
 WORKSPACE = Path(os.environ.get("WORKSPACE", "/tmp/workspace"))
 STATIC_DIR = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 state: dict = {"repo": None, "agent": None}
+
+
+@app.middleware("http")
+async def require_password(request: Request, call_next):
+    """If APP_PASSWORD is set, every /api request must carry it in X-App-Password."""
+    if APP_PASSWORD and request.url.path.startswith("/api/"):
+        given = request.headers.get("x-app-password", "")
+        if not hmac.compare_digest(given, APP_PASSWORD):
+            return JSONResponse({"detail": "password required"}, status_code=401)
+    return await call_next(request)
 
 
 def git(*args: str, cwd: Path) -> str:

@@ -10,6 +10,7 @@ Minimal web app: pick one of your GitHub repositories, let a Claude-powered agen
 | `GITHUB_TOKEN` | GitHub personal access token with `repo` scope (list, clone, push) |
 | `MODEL` | optional, default `claude-opus-5-5` |
 | `GIT_USER_NAME` / `GIT_USER_EMAIL` | optional, commit author |
+| `APP_PASSWORD` | optional; when set, the page asks for this password before using the API |
 
 Put the values in `.env` at the project root (it is git-ignored and never copied into the Docker image):
 
@@ -32,18 +33,10 @@ Open http://localhost:8000.
 
 ```bash
 gcloud run deploy code-agent --source . --region us-central1 \
-  --no-allow-unauthenticated --timeout 3600 --memory 2Gi \
+  --allow-unauthenticated --timeout 3600 --memory 2Gi --min-instances 1 \
   --set-env-vars "$(grep -v '^#' .env | grep = | paste -sd, -)"
 ```
 
-The `--set-env-vars` line reads the values from `.env` and passes them to the service.
+The `--set-env-vars` line reads the values from `.env` and passes them to the service. The site is public; set `APP_PASSWORD` in `.env` to require a password, since the agent runs shell commands and can push to your repositories with your token.
 
-The service runs arbitrary shell commands from the model, so keep it private. Reach it through an authenticated tunnel:
-
-```bash
-gcloud run services proxy code-agent --region us-central1
-```
-
-Then open http://localhost:8080.
-
-Notes: state (the cloned repo and the conversation) lives in the container's memory and disk, so it resets on a new instance. Keep `--min-instances 1` if you want it to persist across requests on an idle service.
+Notes: state (the cloned repo and the conversation) lives in the container's memory and disk. `--min-instances 1` keeps one instance warm so it persists while idle; a restarted instance starts empty.

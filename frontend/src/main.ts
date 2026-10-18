@@ -11,6 +11,24 @@ type AgentEvent =
   | { type: "error"; text: string }
   | { type: "done" };
 
+function headers(): Record<string, string> {
+  const h: Record<string, string> = { "Content-Type": "application/json" };
+  const pw = localStorage.getItem("appPassword");
+  if (pw) h["X-App-Password"] = pw;
+  return h;
+}
+
+async function api(url: string, init: RequestInit = {}): Promise<Response> {
+  let res = await fetch(url, { ...init, headers: headers() });
+  if (res.status === 401) {
+    const pw = prompt("Password");
+    if (pw === null) return res;
+    localStorage.setItem("appPassword", pw);
+    res = await fetch(url, { ...init, headers: headers() });
+  }
+  return res;
+}
+
 function append(text: string, cls = ""): HTMLSpanElement {
   const span = document.createElement("span");
   span.className = cls;
@@ -21,19 +39,15 @@ function append(text: string, cls = ""): HTMLSpanElement {
 }
 
 async function post<T>(url: string, body: unknown): Promise<T> {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const res = await api(url, { method: "POST", body: JSON.stringify(body) });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
 }
 
 async function loadRepos() {
-  const list: { full_name: string }[] = await (await fetch("/api/repos")).json();
+  const { repo } = await (await api("/api/status")).json();
+  const list: { full_name: string }[] = await (await api("/api/repos")).json();
   for (const r of list) repos.add(new Option(r.full_name));
-  const { repo } = await (await fetch("/api/status")).json();
   if (repo) current.textContent = `Working on ${repo}`;
 }
 
@@ -53,11 +67,7 @@ $("send").onclick = async () => {
   if (!message) return;
   input.value = "";
   append(`\n> ${message}\n\n`, "tool");
-  const res = await fetch("/api/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message }),
-  });
+  const res = await api("/api/chat", { method: "POST", body: JSON.stringify({ message }) });
   if (!res.ok || !res.body) return void append(await res.text(), "error");
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
