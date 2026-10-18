@@ -1,5 +1,7 @@
 """Code agent: a Claude tool-use loop confined to one checked-out repository."""
+import base64
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Iterator
@@ -7,24 +9,100 @@ from typing import Iterator
 import anthropic
 
 MODEL = os.environ.get("MODEL", "claude-opus-5-5")
+GCP_PROJECT = os.environ.get("GCP_PROJECT", "")
+GCP_REGION = os.environ.get("GCP_REGION", "us-central1")
+GCP_SA_KEY_B64 = os.environ.get("GCP_SA_KEY_B64", "")
 
 SYSTEM = (
     "You are a coding agent working inside a git repository checked out at {root}. "
     "Use the bash tool to explore the code and run commands, and the text editor tool "
     "to read and modify files. Every path must be inside {root}. "
-    "Do not run git commit or git push; the user pushes separately. "
+    "Do not run git commit or git push yourself; the user pushes separately. "
+    "When the user asks to publish or deploy the app, make sure the repository has a "
+    "Dockerfile at its root that serves HTTP on the PORT environment variable, then call "
+    "the publish tool, which pushes the branch and deploys through GitHub Actions. "
     "When you finish a task, briefly summarize what you changed."
 )
+
+PUBLISH_TOOL = {
+    "name": "publish",
+    "description": (
+        "Publish this repository as a public web app on Google Cloud Run through a GitHub "
+        "Actions workflow. Writes .github/workflows/deploy.yml, stores the required GitHub "
+        "secrets on the repository, commits and pushes the current branch. The repository "
+        "must contain a Dockerfile at its root that serves HTTP on $PORT. Returns the "
+        "GitHub Actions URL where the deploy can be watched."
+    ),
+    "eager_input_streaming": True,
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "service_name": {
+                "type": "string",
+                "description": "Cloud Run service name: lowercase letters, digits and dashes.",
+            },
+            "env": {
+                "type": "object",
+                "description": "Environment variables for the deployed app. Values are stored "
+                               "as GitHub secrets and never committed.",
+                "additionalProperties": {"type": "string"},
+            },
+        },
+        "required": ["service_name"],
+    },
+}
 
 TOOLS = [
     {"type": "bash_20250124", "name": "bash"},
     {"type": "text_editor_20250728", "name": "str_replace_based_edit_tool"},
+    PUBLISH_TOOL,
 ]
+
+WORKFLOW = """name: Deploy to Cloud Run
+
+on:
+  push:
+    branches: [{branch}]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{{{ secrets.GCP_SA_KEY }}}}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy
+        run: |
+          gcloud run deploy {service} --source . --region {region} --project {project} \\
+            --allow-unauthenticated --quiet{env_flag}
+"""
+
+
+def run_git(root: Path, *args: str) -> str:
+    result = subprocess.run(["git", *args], cwd=root, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise RuntimeError((result.stdout + result.stderr).strip())
+    return (result.stdout + result.stderr).strip()
+
+
+def commit_and_push(root: Path, message: str) -> str:
+    run_git(root, "add", "-A")
+    if not run_git(root, "status", "--porcelain"):
+        return "nothing to commit"
+    run_git(root, "commit", "-m", message)
+    return run_git(root, "push")
 
 
 class Agent:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, repo: str):
         self.root = root.resolve()
+        self.repo = repo  # "owner/name"
         self.messages: list[dict] = []
         self.client = anthropic.Anthropic()
 
@@ -83,11 +161,56 @@ class Agent:
             return "inserted"
         raise ValueError(f"unknown editor command: {cmd}")
 
+    def _set_secret(self, name: str, value: str) -> None:
+        result = subprocess.run(
+            ["gh", "secret", "set", name, "--repo", self.repo],
+            input=value, capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"gh secret set {name}: {result.stderr.strip()}")
+
+    def _publish(self, inp: dict) -> str:
+        service = inp.get("service_name")
+        env = inp.get("env") or {}
+        if not isinstance(service, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,48}", service):
+            raise ValueError("service_name must be lowercase letters, digits and dashes")
+        if not isinstance(env, dict) or not all(
+            re.fullmatch(r"[A-Z_][A-Z0-9_]*", k) and isinstance(v, str) for k, v in env.items()
+        ):
+            raise ValueError("env must map UPPER_CASE names to string values")
+        if not GCP_SA_KEY_B64 or not GCP_PROJECT:
+            raise RuntimeError("GCP_SA_KEY_B64 and GCP_PROJECT must be set on this service")
+        if not (self.root / "Dockerfile").exists():
+            raise FileNotFoundError("no Dockerfile at the repository root; create one first")
+
+        branch = run_git(self.root, "branch", "--show-current")
+        env_flag = ""
+        if env:
+            pairs = ",".join(f"{k}=${{{{ secrets.{k} }}}}" for k in env)
+            env_flag = f' \\\n            --set-env-vars "{pairs}"'
+        workflow = self.root / ".github" / "workflows" / "deploy.yml"
+        workflow.parent.mkdir(parents=True, exist_ok=True)
+        workflow.write_text(WORKFLOW.format(
+            branch=branch, service=service, region=GCP_REGION, project=GCP_PROJECT, env_flag=env_flag,
+        ))
+
+        self._set_secret("GCP_SA_KEY", base64.b64decode(GCP_SA_KEY_B64).decode())
+        for key, value in env.items():
+            self._set_secret(key, value)
+
+        pushed = commit_and_push(self.root, f"Deploy {service} to Cloud Run via GitHub Actions")
+        return (
+            f"Pushed to {branch} ({pushed}). GitHub Actions is deploying service '{service}'. "
+            f"Watch it at https://github.com/{self.repo}/actions; the Deploy step prints the public URL."
+        )
+
     def _run_tool(self, name: str, inp: dict) -> str:
         if name == "bash":
             return self._bash(inp)
         if name == "str_replace_based_edit_tool":
             return self._editor(inp)
+        if name == "publish":
+            return self._publish(inp)
         raise ValueError(f"unknown tool: {name}")
 
     # ---- loop --------------------------------------------------------------

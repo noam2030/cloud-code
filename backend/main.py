@@ -17,7 +17,7 @@ if ENV_FILE.exists():
             key, _, value = line.partition("=")
             os.environ.setdefault(key.strip(), value.strip())
 
-from .agent import Agent  # noqa: E402
+from .agent import Agent, commit_and_push  # noqa: E402
 
 app = FastAPI()
 
@@ -79,7 +79,7 @@ def select_repo(body: SelectBody):
     git("config", "user.name", os.environ.get("GIT_USER_NAME", "Code Agent"), cwd=dest)
     git("config", "user.email", os.environ.get("GIT_USER_EMAIL", "code-agent@users.noreply.github.com"), cwd=dest)
     state["repo"] = body.full_name
-    state["agent"] = Agent(dest)
+    state["agent"] = Agent(dest, body.full_name)
     return {"repo": body.full_name}
 
 
@@ -101,11 +101,10 @@ def chat(body: ChatBody):
 @app.post("/api/push")
 def push(body: PushBody):
     root = current_agent().root
-    git("add", "-A", cwd=root)
-    if not git("status", "--porcelain", cwd=root):
-        return {"output": "nothing to commit"}
-    git("commit", "-m", body.message, cwd=root)
-    return {"output": git("push", cwd=root)}
+    try:
+        return {"output": commit_and_push(root, body.message)}
+    except RuntimeError as exc:
+        raise HTTPException(500, str(exc))
 
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")

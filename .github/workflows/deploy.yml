@@ -17,7 +17,9 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v2
 
       - name: Deploy
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
         run: |
           gcloud run deploy code-agent --source . --region us-central1 --project ai-learning-499409 \
             --allow-unauthenticated --timeout 3600 --quiet \
-            --set-env-vars "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }},GITHUB_TOKEN=${{ secrets.GH_PAT }}"
+            --set-env-vars "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }},GITHUB_TOKEN=${{ secrets.GH_PAT }},GCP_PROJECT=ai-learning-499409,GCP_REGION=us-central1,GCP_SA_KEY_B64=$(printf '%s' "$GCP_SA_KEY" | base64 -w0)"
