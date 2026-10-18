@@ -215,8 +215,24 @@ class Agent:
 
     # ---- loop --------------------------------------------------------------
 
+    def _close_open_tool_uses(self) -> None:
+        """Ensure every tool_use in the last assistant turn has a tool_result.
+
+        The API rejects the whole conversation otherwise. A turn can end without
+        results when the client disconnects mid-turn or output hits max_tokens.
+        """
+        if not self.messages or self.messages[-1]["role"] != "assistant":
+            return
+        ids = [b.id for b in self.messages[-1]["content"] if getattr(b, "type", None) == "tool_use"]
+        if ids:
+            self.messages.append({"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": i, "is_error": True,
+                 "content": "tool execution was interrupted"} for i in ids
+            ]})
+
     def run(self, user_message: str) -> Iterator[dict]:
         """Run one user turn. Yields events: text, tool, tool_result, error."""
+        self._close_open_tool_uses()
         self.messages.append({"role": "user", "content": user_message})
         while True:
             with self.client.beta.messages.stream(
@@ -238,26 +254,37 @@ class Agent:
             self.messages.append({"role": "assistant", "content": response.content})
 
             if response.stop_reason == "refusal":
+                self._close_open_tool_uses()
                 detail = response.stop_details.explanation if response.stop_details else ""
                 yield {"type": "error", "text": f"The model declined this request. {detail}".strip()}
                 return
             if response.stop_reason == "max_tokens":
+                self._close_open_tool_uses()
                 yield {"type": "error", "text": "Output was cut off at max_tokens."}
                 return
             if response.stop_reason != "tool_use":
                 return
 
-            results = []
-            for block in response.content:
-                if block.type != "tool_use":
-                    continue
-                yield {"type": "tool", "name": block.name, "input": block.input}
-                try:
-                    output = self._run_tool(block.name, block.input)
-                    results.append({"type": "tool_result", "tool_use_id": block.id, "content": output})
-                except Exception as exc:  # report to the model so it can recover
-                    output = f"error: {exc}"
-                    results.append({"type": "tool_result", "tool_use_id": block.id,
-                                    "content": output, "is_error": True})
-                yield {"type": "tool_result", "text": output[:2000]}
-            self.messages.append({"role": "user", "content": results})
+            results: list[dict] = []
+            try:
+                for block in response.content:
+                    if block.type != "tool_use":
+                        continue
+                    yield {"type": "tool", "name": block.name, "input": block.input}
+                    try:
+                        output = self._run_tool(block.name, block.input)
+                        results.append({"type": "tool_result", "tool_use_id": block.id, "content": output})
+                    except Exception as exc:  # report to the model so it can recover
+                        output = f"error: {exc}"
+                        results.append({"type": "tool_result", "tool_use_id": block.id,
+                                        "content": output, "is_error": True})
+                    yield {"type": "tool_result", "text": output[:2000]}
+            finally:
+                # Always record a result for every tool_use, even if the client
+                # disconnected mid-turn and this generator was closed.
+                done = {r["tool_use_id"] for r in results}
+                for block in response.content:
+                    if block.type == "tool_use" and block.id not in done:
+                        results.append({"type": "tool_result", "tool_use_id": block.id,
+                                        "content": "tool execution was interrupted", "is_error": True})
+                self.messages.append({"role": "user", "content": results})
