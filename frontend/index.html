@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Code Agent</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+      #log { border: 1px solid #ccc; padding: 1rem; min-height: 300px; white-space: pre-wrap; margin: 1rem 0; }
+      .tool { color: #555; font-family: monospace; font-size: 0.85em; }
+      .error { color: #b00; }
+      textarea { width: 100%; height: 5rem; }
+      button { margin-right: 0.5rem; }
+    </style>
+  </head>
+  <body>
+    <h1>Code Agent</h1>
+    <div>
+      <select id="repos"></select>
+      <button id="select">Select</button>
+      <span id="current"></span>
+    </div>
+    <div id="log"></div>
+    <textarea id="input" placeholder="Tell the agent what to do"></textarea>
+    <div>
+      <button id="send">Send</button>
+      <button id="push">Push to GitHub</button>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
