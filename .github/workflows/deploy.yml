@@ -20,4 +20,4 @@ jobs:
         run: |
           gcloud run deploy code-agent --source . --region us-central1 --project ai-learning-499409 \
             --allow-unauthenticated --timeout 3600 --quiet \
-            --set-env-vars "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }},GITHUB_TOKEN=${{ secrets.GH_PAT }},APP_PASSWORD=${{ secrets.APP_PASSWORD }}"
+            --set-env-vars "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }},GITHUB_TOKEN=${{ secrets.GH_PAT }}"
