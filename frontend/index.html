@@ -3,31 +3,86 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="description" content="Code Agent: a Claude-powered agent that works on your GitHub repositories." />
     <title>Code Agent</title>
-    <style>
-      body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
-      #log { border: 1px solid #ccc; padding: 1rem; min-height: 300px; white-space: pre-wrap; margin: 1rem 0; }
-      .tool { color: #555; font-family: monospace; font-size: 0.85em; }
-      .error { color: #b00; }
-      textarea { width: 100%; height: 5rem; }
-      button { margin-right: 0.5rem; }
-    </style>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Cpath d='M12 10l-6 6 6 6M20 10l6 6-6 6' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <h1>Code Agent</h1>
-    <div>
-      <select id="repos"></select>
-      <button id="select">Select</button>
-      <input id="newname" placeholder="new project name" />
-      <button id="create">Create</button>
-      <span id="current"></span>
-    </div>
-    <div id="log"></div>
-    <textarea id="input" placeholder="Tell the agent what to do"></textarea>
-    <div>
-      <button id="send">Send</button>
-      <button id="push">Push to GitHub</button>
-    </div>
+    <header class="topbar">
+      <a class="brand" href="/">
+        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+          <rect width="32" height="32" rx="8" />
+          <path d="M12 10l-6 6 6 6M20 10l6 6-6 6" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+        <span class="brand-name">Code Agent</span>
+      </a>
+
+      <div class="repo-controls">
+        <label class="field">
+          <span class="field-label">Repository</span>
+          <span class="select-wrap">
+            <select id="repos" aria-label="Repository"></select>
+          </span>
+        </label>
+        <button id="select" class="btn">Open</button>
+        <span class="divider" aria-hidden="true"></span>
+        <label class="field">
+          <span class="field-label">New project</span>
+          <input id="newname" placeholder="my-new-app" autocomplete="off" spellcheck="false" />
+        </label>
+        <button id="create" class="btn">Create</button>
+      </div>
+
+      <div id="status" class="status status-idle" role="status" aria-live="polite">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="status-text">No repository selected</span>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <section id="log" class="conversation" aria-label="Conversation" aria-live="polite">
+        <div id="empty" class="empty-state">
+          <svg viewBox="0 0 32 32" aria-hidden="true">
+            <rect width="32" height="32" rx="8" />
+            <path d="M12 10l-6 6 6 6M20 10l6 6-6 6" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <h1>What should we build?</h1>
+          <p>Open one of your GitHub repositories or create a new project, then describe the change you want. The agent reads and edits the code, runs commands, and pushes when you ask.</p>
+        </div>
+      </section>
+
+      <form id="composer" class="composer">
+        <textarea id="input" rows="1" placeholder="Describe what you want the agent to do…" aria-label="Message"></textarea>
+        <div class="composer-actions">
+          <span class="hint"><kbd>Enter</kbd> to send, <kbd>Shift</kbd> + <kbd>Enter</kbd> for a new line</span>
+          <div class="composer-buttons">
+            <button id="push" type="button" class="btn">Push to GitHub</button>
+            <button id="send" type="submit" class="btn btn-primary">
+              <span>Send</span>
+              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 10h13M11 5l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+        </div>
+      </form>
+    </main>
+
+    <dialog id="push-dialog" class="dialog">
+      <form method="dialog" class="dialog-form">
+        <h2>Push to GitHub</h2>
+        <p class="dialog-text">Commit every change in the working tree and push it to the repository's current branch.</p>
+        <label class="field field-block">
+          <span class="field-label">Commit message</span>
+          <input id="commit-message" value="Update from code agent" autocomplete="off" />
+        </label>
+        <div class="dialog-actions">
+          <button type="button" class="btn" data-close>Cancel</button>
+          <button type="submit" class="btn btn-primary">Commit and push</button>
+        </div>
+      </form>
+    </dialog>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
