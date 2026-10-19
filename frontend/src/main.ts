@@ -13,11 +13,20 @@ const createBtn = $<HTMLButtonElement>("create");
 const newName = $<HTMLInputElement>("newname");
 const pushDialog = $<HTMLDialogElement>("push-dialog");
 const commitMessage = $<HTMLInputElement>("commit-message");
+const publishBtn = $<HTMLButtonElement>("publish");
+const publishDialog = $<HTMLDialogElement>("publish-dialog");
+const serviceName = $<HTMLInputElement>("service-name");
 
 type AgentEvent =
   | { type: "text"; text: string }
   | { type: "tool"; name: string; input: Record<string, unknown> }
   | { type: "tool_result"; text: string }
+  | { type: "error"; text: string }
+  | { type: "done" };
+
+type PublishEvent =
+  | { type: "status"; text: string }
+  | { type: "url"; url: string }
   | { type: "error"; text: string }
   | { type: "done" };
 
@@ -46,6 +55,7 @@ function setBusy(value: boolean) {
 function updateControls() {
   sendBtn.disabled = busy || !repo;
   pushBtn.disabled = busy || !repo;
+  publishBtn.disabled = busy || !repo;
   selectBtn.disabled = busy;
   createBtn.disabled = busy;
   input.disabled = busy || !repo;
@@ -63,7 +73,8 @@ function inline(s: string): string {
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|[\s(])\*([^*\n]+)\*(?=[\s).,;:!?]|$)/g, "$1<em>$2</em>")
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+    .replace(/(^|[^"'>=])(https?:\/\/[^\s<"]+?)([.,;:!?)\]]*)(?=\s|$|<)/g, '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>$3');
 }
 
 /** Small markdown renderer: fenced code, headings, lists, paragraphs. Everything is escaped first. */
@@ -186,6 +197,50 @@ function addNotice(text: string, kind: "error" | "ok" | "" = "") {
   add(el("div", `notice${kind ? ` notice-${kind}` : ""}`, text));
 }
 
+function addProgress(text: string) {
+  const box = add(el("div", "notice notice-progress"));
+  const line = (text: string) => {
+    const node = el("div", "notice-line");
+    node.innerHTML = inline(text);
+    return node;
+  };
+  box.append(line(text));
+  return {
+    step(text: string) {
+      box.append(line(text));
+      scrollToBottom();
+    },
+    done() {
+      box.classList.add("notice-done");
+    },
+  };
+}
+
+function addUrlNotice(label: string, url: string) {
+  const box = el("div", "notice notice-ok notice-url");
+  const link = el("a", "", url) as HTMLAnchorElement;
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  box.append(`${label} `, link);
+  add(box);
+}
+
+/** Read a newline-delimited JSON stream, calling onEvent for each object. */
+async function readNdjson<T>(body: ReadableStream<Uint8Array>, onEvent: (ev: T) => void) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) if (line) onEvent(JSON.parse(line));
+  }
+}
+
 // ---------- Repositories ----------
 
 async function post<T>(url: string, body: unknown): Promise<T> {
@@ -267,18 +322,24 @@ input.addEventListener("keydown", (e) => {
   }
 });
 
-composer.onsubmit = async (e) => {
+composer.onsubmit = (e) => {
   e.preventDefault();
   const message = input.value.trim();
   if (!message || busy || !repo) return;
   input.value = "";
   autosize();
+  runChat(message);
+};
+
+async function runChat(message: string) {
+  if (!repo) return;
   addUserMessage(message);
   setBusy(true);
   setStatus("busy", `Working on <strong>${escapeHtml(repo)}</strong>…`);
 
-  let assistant: ReturnType<typeof addAssistantMessage> | null = null;
-  let tool: ReturnType<typeof addToolCall> | null = null;
+  let assistant = null as ReturnType<typeof addAssistantMessage> | null;
+  let tool = null as ReturnType<typeof addToolCall> | null;
+  let toolName = "";
   const closeAssistant = () => {
     assistant?.finish();
     assistant = null;
@@ -294,37 +355,28 @@ composer.onsubmit = async (e) => {
       addNotice(await res.text(), "error");
       return;
     }
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        if (!line) continue;
-        const ev: AgentEvent = JSON.parse(line);
-        if (ev.type === "text") {
-          if (!assistant) assistant = addAssistantMessage();
-          assistant.append(ev.text);
-        } else if (ev.type === "tool") {
-          closeAssistant();
-          tool?.done();
-          tool = addToolCall(ev.name, ev.input);
-        } else if (ev.type === "tool_result") {
-          if (tool) tool.result(ev.text);
-          else addNotice(ev.text);
-          tool = null;
-        } else if (ev.type === "error") {
-          closeAssistant();
-          tool?.done();
-          tool = null;
-          addNotice(ev.text, "error");
-        }
+    await readNdjson<AgentEvent>(res.body, (ev) => {
+      if (ev.type === "text") {
+        if (!assistant) assistant = addAssistantMessage();
+        assistant.append(ev.text);
+      } else if (ev.type === "tool") {
+        closeAssistant();
+        tool?.done();
+        tool = addToolCall(ev.name, ev.input);
+        toolName = ev.name;
+      } else if (ev.type === "tool_result") {
+        if (tool) tool.result(ev.text);
+        else addNotice(ev.text);
+        tool = null;
+        const published = toolName === "publish" && ev.text.match(/Public URL: (https:\/\/\S+)/);
+        if (published) addUrlNotice("Your app is live at", published[1]);
+      } else if (ev.type === "error") {
+        closeAssistant();
+        tool?.done();
+        tool = null;
+        addNotice(ev.text, "error");
       }
-    }
+    });
   } catch (err) {
     addNotice(`Connection lost: ${err}`, "error");
   } finally {
@@ -334,7 +386,7 @@ composer.onsubmit = async (e) => {
     showRepo(repo);
     input.focus();
   }
-};
+}
 
 // ---------- Push ----------
 
@@ -358,6 +410,67 @@ pushDialog.querySelector("form")!.onsubmit = async (e) => {
   } catch (err) {
     addNotice(`Push failed: ${err}`, "error");
   } finally {
+    setBusy(false);
+    showRepo(repo);
+  }
+};
+
+// ---------- Publish ----------
+
+function defaultServiceName(fullName: string): string {
+  let name = fullName.split("/").pop()!.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
+  if (!/^[a-z]/.test(name)) name = `app-${name}`.replace(/-+$/, "");
+  return name.slice(0, 49).replace(/-+$/, "");
+}
+
+publishBtn.onclick = () => {
+  if (!repo || busy) return;
+  serviceName.value = defaultServiceName(repo);
+  publishDialog.showModal();
+  serviceName.select();
+};
+
+publishDialog.querySelector<HTMLButtonElement>("[data-close]")!.onclick = () => publishDialog.close("cancel");
+
+publishDialog.querySelector("form")!.onsubmit = async (e) => {
+  e.preventDefault();
+  const service = serviceName.value.trim();
+  if (!service || !repo) return;
+  publishDialog.close();
+  setBusy(true);
+  setStatus("busy", `Publishing <strong>${escapeHtml(service)}</strong>…`);
+  const progress = addProgress(`Publishing ${service} to Cloud Run…`);
+  let url = null as string | null;
+  try {
+    const res = await fetch("/api/publish", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ service_name: service }),
+    });
+    if (res.status === 409) {
+      // No Dockerfile yet: let the agent add one and publish through its tool.
+      progress.step("The repository has no Dockerfile. Asking the agent to add one and publish…");
+      progress.done();
+      setBusy(false);
+      await runChat(
+        `Publish this app as the Cloud Run service "${service}": add a Dockerfile at the repository root if it is missing, then call the publish tool and tell me the public URL.`,
+      );
+      return;
+    }
+    if (!res.ok || !res.body) {
+      addNotice(await res.text(), "error");
+      return;
+    }
+    await readNdjson<PublishEvent>(res.body, (ev) => {
+      if (ev.type === "status") progress.step(ev.text);
+      else if (ev.type === "url") url = ev.url;
+      else if (ev.type === "error") addNotice(`Publish failed: ${ev.text}`, "error");
+    });
+    if (url) addUrlNotice("Your app is live at", url);
+  } catch (err) {
+    addNotice(`Publish failed: ${err}`, "error");
+  } finally {
+    progress.done();
     setBusy(false);
     showRepo(repo);
   }

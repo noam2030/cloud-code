@@ -18,7 +18,7 @@ if ENV_FILE.exists():
             key, _, value = line.partition("=")
             os.environ.setdefault(key.strip(), value.strip())
 
-from .agent import Agent, commit_and_push  # noqa: E402
+from .agent import Agent, commit_and_push, default_service_name  # noqa: E402
 
 app = FastAPI()
 
@@ -56,6 +56,11 @@ class ChatBody(BaseModel):
 
 class PushBody(BaseModel):
     message: str = "Update from code agent"
+
+
+class PublishBody(BaseModel):
+    service_name: str | None = None
+    env: dict[str, str] = {}
 
 
 def github(path: str, body: dict | None = None):
@@ -134,6 +139,25 @@ def push(body: PushBody):
         return {"output": commit_and_push(root, body.message)}
     except RuntimeError as exc:
         raise HTTPException(500, str(exc))
+
+
+@app.post("/api/publish")
+def publish(body: PublishBody):
+    """Deploy the repository to Cloud Run and stream progress until the public URL is known."""
+    agent = current_agent()
+    service = body.service_name or default_service_name(state["repo"])
+    if not (agent.root / "Dockerfile").exists():
+        raise HTTPException(409, "no_dockerfile")
+
+    def events():
+        try:
+            for event in agent.deploy_events(service, body.env):
+                yield json.dumps(event) + "\n"
+        except Exception as exc:
+            yield json.dumps({"type": "error", "text": str(exc)}) + "\n"
+        yield json.dumps({"type": "done"}) + "\n"
+
+    return StreamingResponse(events(), media_type="application/x-ndjson")
 
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
