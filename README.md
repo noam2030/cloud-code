@@ -43,6 +43,8 @@ Notes: state (the cloned repo and the conversation) lives in the container's mem
 
 ## Publishing an app the agent built
 
-Click **Publish**, confirm the Cloud Run service name, and wait. The app writes `.github/workflows/deploy.yml` into the repository, stores `GCP_SA_KEY` as a GitHub secret there, commits and pushes, then follows the GitHub Actions run and prints the public URL when the deploy finishes (usually a few minutes). If the repository has no Dockerfile yet, the request is handed to the agent, which adds one and publishes through its `publish` tool; that tool follows the same steps and reports the URL as well. You can also just ask the agent to publish or deploy.
+The first time, ask the agent to publish or deploy. It makes sure the repository has a Dockerfile, then calls its `publish` tool, which writes `.github/workflows/deploy.yml` into that repository, stores `GCP_SA_KEY` (and any app environment variables) as GitHub secrets there, commits and pushes, waits for the GitHub Actions deploy and reports the public URL.
+
+From then on, every **Push to GitHub** triggers that workflow. The app follows the run and shows the public URL in the conversation when the deploy finishes (usually a few minutes).
 
 This needs the GitHub CLI in the container (installed by the Dockerfile) and the `GCP_*` variables above, which the agent's own deploy workflow sets.

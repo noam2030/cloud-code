@@ -59,10 +59,6 @@
           <span class="hint"><kbd>Enter</kbd> to send, <kbd>Shift</kbd> + <kbd>Enter</kbd> for a new line</span>
           <div class="composer-buttons">
             <button id="push" type="button" class="btn">Push to GitHub</button>
-            <button id="publish" type="button" class="btn">
-              <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 15V5M5 9l5-5 5 5M4 16h12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              <span>Publish</span>
-            </button>
             <button id="send" type="submit" class="btn btn-primary">
               <span>Send</span>
               <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 10h13M11 5l5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -75,7 +71,7 @@
     <dialog id="push-dialog" class="dialog">
       <form method="dialog" class="dialog-form">
         <h2>Push to GitHub</h2>
-        <p class="dialog-text">Commit every change in the working tree and push it to the repository's current branch.</p>
+        <p class="dialog-text">Commit every change and push it to GitHub. If the repository deploys through GitHub Actions, the deploy is followed and the public URL appears in the conversation when it is live.</p>
         <label class="field field-block">
           <span class="field-label">Commit message</span>
           <input id="commit-message" value="Update from code agent" autocomplete="off" />
@@ -83,21 +79,6 @@
         <div class="dialog-actions">
           <button type="button" class="btn" data-close>Cancel</button>
           <button type="submit" class="btn btn-primary">Commit and push</button>
-        </div>
-      </form>
-    </dialog>
-
-    <dialog id="publish-dialog" class="dialog">
-      <form method="dialog" class="dialog-form">
-        <h2>Publish</h2>
-        <p class="dialog-text">Deploy this repository as a public web app on Google Cloud Run through GitHub Actions. This takes a few minutes; the public URL appears in the conversation when it is live.</p>
-        <label class="field field-block">
-          <span class="field-label">Service name</span>
-          <input id="service-name" autocomplete="off" spellcheck="false" pattern="[a-z][a-z0-9-]{0,48}" title="Lowercase letters, digits and dashes" required />
-        </label>
-        <div class="dialog-actions">
-          <button type="button" class="btn" data-close>Cancel</button>
-          <button type="submit" class="btn btn-primary">Publish</button>
         </div>
       </form>
     </dialog>

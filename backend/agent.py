@@ -157,14 +157,6 @@ def github_job_log(repo: str, job_id: int) -> str:
         raise RuntimeError(f"GitHub job log: {exc.code}")
 
 
-def default_service_name(repo: str) -> str:
-    """Cloud Run service name derived from 'owner/name'."""
-    name = re.sub(r"[^a-z0-9-]+", "-", repo.split("/")[-1].lower()).strip("-")
-    if not re.match(r"[a-z]", name):
-        name = f"app-{name}".strip("-")
-    return name[:49].rstrip("-")
-
-
 class Agent:
     def __init__(self, root: Path, repo: str):
         self.root = root.resolve()
@@ -291,7 +283,7 @@ class Agent:
         return branch, pushed
 
     def deploy_events(self, service: str, env: dict | None = None) -> Iterator[dict]:
-        """Publish and follow the GitHub Actions deploy until it finishes.
+        """Publish (write workflow, push) and follow the GitHub Actions deploy until it finishes.
 
         Yields {"type": "status", "text"} events, then {"type": "url", "url"} on success.
         Raises RuntimeError when the deploy fails or times out.
@@ -304,7 +296,21 @@ class Agent:
             yield {"type": "status", "text": f"No new changes on {branch}; triggered the deploy workflow."}
         else:
             yield {"type": "status", "text": f"Pushed {sha[:7]} to {branch}. Waiting for GitHub Actions to deploy '{service}'…"}
+        yield from self.follow_deploy(sha, started)
 
+    def push_events(self, message: str) -> Iterator[dict]:
+        """Commit and push. If the repository deploys through GitHub Actions, follow that deploy."""
+        started = datetime.now(timezone.utc)
+        output = commit_and_push(self.root, message)
+        yield {"type": "notice", "kind": "ok", "text": output or "Pushed to GitHub."}
+        if output == "nothing to commit" or not (self.root / ".github" / "workflows" / "deploy.yml").exists():
+            return
+        sha = run_git(self.root, "rev-parse", "HEAD")
+        yield {"type": "progress", "text": f"GitHub Actions is deploying {sha[:7]}…"}
+        yield from self.follow_deploy(sha, started)
+
+    def follow_deploy(self, sha: str, started: datetime) -> Iterator[dict]:
+        """Wait for the deploy workflow run of `sha` (created after `started`) and report its URL."""
         deadline = time.monotonic() + DEPLOY_TIMEOUT
         run = None
         while run is None:
@@ -341,7 +347,7 @@ class Agent:
                 break
         if not url:
             raise RuntimeError(f"Deploy succeeded but no service URL was found in the log: {run['html_url']}")
-        yield {"type": "status", "text": f"Deployed '{service}' to Cloud Run."}
+        yield {"type": "status", "text": "Deployed to Cloud Run."}
         yield {"type": "url", "url": url}
 
     def _publish(self, inp: dict) -> str:

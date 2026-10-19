@@ -13,15 +13,12 @@ const createBtn = $<HTMLButtonElement>("create");
 const newName = $<HTMLInputElement>("newname");
 const pushDialog = $<HTMLDialogElement>("push-dialog");
 const commitMessage = $<HTMLInputElement>("commit-message");
-const publishBtn = $<HTMLButtonElement>("publish");
-const publishDialog = $<HTMLDialogElement>("publish-dialog");
-const serviceName = $<HTMLInputElement>("service-name");
 
 /** Events recorded by the server. The same stream is replayed on page load and followed live. */
 type TranscriptEvent = { seq?: number } & (
   | { type: "reset"; repo: string | null }
   | { type: "user"; text: string }
-  | { type: "publish"; text: string }
+  | { type: "progress"; text: string }
   | { type: "text"; text: string }
   | { type: "tool"; name: string; input: Record<string, unknown> }
   | { type: "tool_result"; text: string }
@@ -65,7 +62,6 @@ function setBusy(value: boolean, label?: string) {
 function updateControls() {
   sendBtn.disabled = busy || !repo;
   pushBtn.disabled = busy || !repo;
-  publishBtn.disabled = busy || !repo;
   selectBtn.disabled = busy;
   createBtn.disabled = busy;
   input.disabled = busy || !repo;
@@ -293,10 +289,10 @@ function applyEvent(ev: TranscriptEvent) {
       addUserMessage(ev.text);
       setBusy(true, `Working on <strong>${escapeHtml(repo ?? "")}</strong>…`);
       break;
-    case "publish":
+    case "progress":
       closeAll();
       view.progress = addProgress(ev.text);
-      setBusy(true, "Publishing…");
+      setBusy(true, "Deploying…");
       break;
     case "text":
       if (!view.assistant) view.assistant = addAssistantMessage();
@@ -476,6 +472,7 @@ pushBtn.onclick = () => {
 
 pushDialog.querySelector<HTMLButtonElement>("[data-close]")!.onclick = () => pushDialog.close("cancel");
 
+/** Ask the server to push. The result, and any deploy that follows, arrive through follow(). */
 pushDialog.querySelector("form")!.onsubmit = async (e) => {
   e.preventDefault();
   const message = commitMessage.value.trim() || "Update from code agent";
@@ -483,54 +480,10 @@ pushDialog.querySelector("form")!.onsubmit = async (e) => {
   setBusy(true, `Pushing <strong>${escapeHtml(repo!)}</strong>…`);
   try {
     await post("/api/push", { message });
-  } catch {
-    // the server records the failure as a notice event
-  } finally {
+  } catch (err) {
     setBusy(false);
     showRepo(repo);
-  }
-};
-
-// ---------- Publish ----------
-
-function defaultServiceName(fullName: string): string {
-  let name = fullName.split("/").pop()!.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
-  if (!/^[a-z]/.test(name)) name = `app-${name}`.replace(/-+$/, "");
-  return name.slice(0, 49).replace(/-+$/, "");
-}
-
-publishBtn.onclick = () => {
-  if (!repo || busy) return;
-  serviceName.value = defaultServiceName(repo);
-  publishDialog.showModal();
-  serviceName.select();
-};
-
-publishDialog.querySelector<HTMLButtonElement>("[data-close]")!.onclick = () => publishDialog.close("cancel");
-
-publishDialog.querySelector("form")!.onsubmit = async (e) => {
-  e.preventDefault();
-  const service = serviceName.value.trim();
-  if (!service || !repo) return;
-  publishDialog.close();
-  setBusy(true, `Publishing <strong>${escapeHtml(service)}</strong>…`);
-  const res = await fetch("/api/publish", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ service_name: service }),
-  });
-  if (res.status === 409 && (await res.clone().text()).includes("no_dockerfile")) {
-    // No Dockerfile yet: let the agent add one and publish through its tool.
-    addNotice("The repository has no Dockerfile. Asking the agent to add one and publish…");
-    await sendMessage(
-      `Publish this app as the Cloud Run service "${service}": add a Dockerfile at the repository root if it is missing, then call the publish tool and tell me the public URL.`,
-    );
-    return;
-  }
-  if (!res.ok) {
-    setBusy(false);
-    showRepo(repo);
-    addNotice(`Publish failed: ${await res.text()}`, "error");
+    addNotice(String(err), "error");
   }
 };
 
