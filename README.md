@@ -39,7 +39,7 @@ gcloud run deploy code-agent --source . --region us-central1 \
 
 The `--set-env-vars` line reads the values from `.env` and passes them to the service.
 
-Notes: state (the cloned repo and the conversation) lives in the container's memory and disk. `--min-instances 1` keeps one instance warm so it persists while idle; a restarted instance starts empty.
+Notes: state (the cloned repo and the conversation) lives in the container's memory and disk, not in the browser. The server records every event of the conversation and runs each agent turn in the background, so refreshing the page or opening it from another device shows the current state and follows the turn live. `--min-instances 1` keeps one instance warm so it persists while idle; a restarted instance starts empty.
 
 ## Publishing an app the agent built
 

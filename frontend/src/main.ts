@@ -17,21 +17,25 @@ const publishBtn = $<HTMLButtonElement>("publish");
 const publishDialog = $<HTMLDialogElement>("publish-dialog");
 const serviceName = $<HTMLInputElement>("service-name");
 
-type AgentEvent =
+/** Events recorded by the server. The same stream is replayed on page load and followed live. */
+type TranscriptEvent = { seq?: number } & (
+  | { type: "reset"; repo: string | null }
+  | { type: "user"; text: string }
+  | { type: "publish"; text: string }
   | { type: "text"; text: string }
   | { type: "tool"; name: string; input: Record<string, unknown> }
   | { type: "tool_result"; text: string }
-  | { type: "error"; text: string }
-  | { type: "done" };
-
-type PublishEvent =
   | { type: "status"; text: string }
   | { type: "url"; url: string }
+  | { type: "notice"; text: string; kind: "ok" | "error" | "" }
   | { type: "error"; text: string }
-  | { type: "done" };
+  | { type: "done" }
+  | { type: "ping" }
+);
 
 let repo: string | null = null;
 let busy = false;
+let lastSeq = 0;
 
 // ---------- Status ----------
 
@@ -42,13 +46,19 @@ function setStatus(kind: "idle" | "ready" | "busy" | "error", html: string) {
 
 function showRepo(name: string | null) {
   repo = name;
-  if (name) setStatus("ready", `Working on <strong>${escapeHtml(name)}</strong>`);
-  else setStatus("idle", "No repository selected");
+  if (name) {
+    setStatus("ready", `Working on <strong>${escapeHtml(name)}</strong>`);
+    if (repos.value !== name) {
+      if (![...repos.options].some((o) => o.value === name)) repos.add(new Option(name), 0);
+      repos.value = name;
+    }
+  } else setStatus("idle", "No repository selected");
   updateControls();
 }
 
-function setBusy(value: boolean) {
+function setBusy(value: boolean, label?: string) {
   busy = value;
+  if (value && label) setStatus("busy", label);
   updateControls();
 }
 
@@ -241,7 +251,98 @@ async function readNdjson<T>(body: ReadableStream<Uint8Array>, onEvent: (ev: T) 
   }
 }
 
-// ---------- Repositories ----------
+// ---------- Event rendering ----------
+
+/** Open elements that later events append to. */
+const view = {
+  assistant: null as ReturnType<typeof addAssistantMessage> | null,
+  tool: null as ReturnType<typeof addToolCall> | null,
+  toolName: "",
+  progress: null as ReturnType<typeof addProgress> | null,
+};
+
+function closeAssistant() {
+  view.assistant?.finish();
+  view.assistant = null;
+}
+
+function closeAll() {
+  closeAssistant();
+  view.tool?.done();
+  view.tool = null;
+  view.progress?.done();
+  view.progress = null;
+}
+
+function clearConversation() {
+  closeAll();
+  for (const child of Array.from(log.children)) if (child !== empty) child.remove();
+  empty.hidden = false;
+}
+
+function applyEvent(ev: TranscriptEvent) {
+  if (ev.seq) lastSeq = ev.seq;
+  switch (ev.type) {
+    case "reset":
+      clearConversation();
+      setBusy(false);
+      showRepo(ev.repo);
+      break;
+    case "user":
+      closeAll();
+      addUserMessage(ev.text);
+      setBusy(true, `Working on <strong>${escapeHtml(repo ?? "")}</strong>…`);
+      break;
+    case "publish":
+      closeAll();
+      view.progress = addProgress(ev.text);
+      setBusy(true, "Publishing…");
+      break;
+    case "text":
+      if (!view.assistant) view.assistant = addAssistantMessage();
+      view.assistant.append(ev.text);
+      break;
+    case "tool":
+      closeAssistant();
+      view.tool?.done();
+      view.tool = addToolCall(ev.name, ev.input);
+      view.toolName = ev.name;
+      break;
+    case "tool_result": {
+      if (view.tool) view.tool.result(ev.text);
+      else addNotice(ev.text);
+      view.tool = null;
+      const published = view.toolName === "publish" && ev.text.match(/Public URL: (https:\/\/\S+)/);
+      if (published) addUrlNotice("Your app is live at", published[1]);
+      break;
+    }
+    case "status":
+      if (view.progress) view.progress.step(ev.text);
+      else addNotice(ev.text);
+      break;
+    case "url":
+      addUrlNotice("Your app is live at", ev.url);
+      break;
+    case "notice":
+      addNotice(ev.text, ev.kind);
+      break;
+    case "error":
+      closeAssistant();
+      view.tool?.done();
+      view.tool = null;
+      addNotice(ev.text, "error");
+      break;
+    case "done":
+      closeAll();
+      setBusy(false);
+      showRepo(repo);
+      break;
+    case "ping":
+      break;
+  }
+}
+
+// ---------- Server sync ----------
 
 async function post<T>(url: string, body: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -253,58 +354,79 @@ async function post<T>(url: string, body: unknown): Promise<T> {
   return res.json();
 }
 
-function clearConversation() {
-  for (const child of Array.from(log.children)) if (child !== empty) child.remove();
-  empty.hidden = false;
+/** Rebuild the conversation from the server's record. */
+async function loadTranscript() {
+  const res = await fetch("/api/transcript");
+  if (!res.ok) throw new Error(await res.text());
+  const t: { repo: string | null; busy: boolean; events: TranscriptEvent[] } = await res.json();
+  clearConversation();
+  showRepo(t.repo);
+  for (const ev of t.events) applyEvent(ev);
+  if (!t.busy) {
+    closeAll();
+    setBusy(false);
+  } else if (!busy) setBusy(true, `Working on <strong>${escapeHtml(t.repo ?? "")}</strong>…`);
+}
+
+/** Follow new events from the server, reconnecting (and catching up) whenever the stream drops. */
+async function follow() {
+  while (true) {
+    try {
+      const res = await fetch(`/api/events?since=${lastSeq}`);
+      if (!res.ok || !res.body) throw new Error(await res.text());
+      await readNdjson<TranscriptEvent>(res.body, applyEvent);
+    } catch {
+      // connection lost; retry below
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
 }
 
 async function loadRepos() {
   try {
     const list: { full_name: string }[] = await (await fetch("/api/repos")).json();
     for (const r of list) repos.add(new Option(r.full_name));
-    const status = await (await fetch("/api/status")).json();
-    if (status.repo) {
-      repos.value = status.repo;
-      showRepo(status.repo);
-    } else showRepo(null);
+    await loadTranscript();
   } catch (e) {
-    setStatus("error", `Could not load repositories: ${escapeHtml(String(e))}`);
+    setStatus("error", `Could not load: ${escapeHtml(String(e))}`);
   }
+  follow();
 }
+
+document.addEventListener("visibilitychange", () => {
+  // Coming back to a backgrounded tab (typical on a phone): make sure nothing was missed.
+  if (document.visibilityState === "visible") loadTranscript().catch(() => undefined);
+});
+
+// ---------- Repositories ----------
 
 selectBtn.onclick = async () => {
   if (!repos.value) return;
-  setBusy(true);
-  setStatus("busy", `Cloning <strong>${escapeHtml(repos.value)}</strong>…`);
-  clearConversation();
+  setBusy(true, `Cloning <strong>${escapeHtml(repos.value)}</strong>…`);
   try {
     const { repo } = await post<{ repo: string }>("/api/select", { full_name: repos.value });
+    setBusy(false);
     showRepo(repo);
     input.focus();
   } catch (e) {
-    setStatus("error", escapeHtml(String(e)));
-  } finally {
     setBusy(false);
+    setStatus("error", escapeHtml(String(e)));
   }
 };
 
 createBtn.onclick = async () => {
   const name = newName.value.trim();
   if (!name) return void newName.focus();
-  setBusy(true);
-  setStatus("busy", `Creating <strong>${escapeHtml(name)}</strong>…`);
-  clearConversation();
+  setBusy(true, `Creating <strong>${escapeHtml(name)}</strong>…`);
   try {
     const { repo } = await post<{ repo: string }>("/api/create", { name });
-    repos.add(new Option(repo), 0);
-    repos.value = repo;
     newName.value = "";
+    setBusy(false);
     showRepo(repo);
     input.focus();
   } catch (e) {
-    setStatus("error", escapeHtml(String(e)));
-  } finally {
     setBusy(false);
+    setStatus("error", escapeHtml(String(e)));
   }
 };
 
@@ -328,63 +450,19 @@ composer.onsubmit = (e) => {
   if (!message || busy || !repo) return;
   input.value = "";
   autosize();
-  runChat(message);
+  sendMessage(message);
 };
 
-async function runChat(message: string) {
+/** Ask the server to start a turn. Its events, including this message, arrive through follow(). */
+async function sendMessage(message: string) {
   if (!repo) return;
-  addUserMessage(message);
-  setBusy(true);
-  setStatus("busy", `Working on <strong>${escapeHtml(repo)}</strong>…`);
-
-  let assistant = null as ReturnType<typeof addAssistantMessage> | null;
-  let tool = null as ReturnType<typeof addToolCall> | null;
-  let toolName = "";
-  const closeAssistant = () => {
-    assistant?.finish();
-    assistant = null;
-  };
-
+  setBusy(true, `Working on <strong>${escapeHtml(repo)}</strong>…`);
   try {
-    const res = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message }),
-    });
-    if (!res.ok || !res.body) {
-      addNotice(await res.text(), "error");
-      return;
-    }
-    await readNdjson<AgentEvent>(res.body, (ev) => {
-      if (ev.type === "text") {
-        if (!assistant) assistant = addAssistantMessage();
-        assistant.append(ev.text);
-      } else if (ev.type === "tool") {
-        closeAssistant();
-        tool?.done();
-        tool = addToolCall(ev.name, ev.input);
-        toolName = ev.name;
-      } else if (ev.type === "tool_result") {
-        if (tool) tool.result(ev.text);
-        else addNotice(ev.text);
-        tool = null;
-        const published = toolName === "publish" && ev.text.match(/Public URL: (https:\/\/\S+)/);
-        if (published) addUrlNotice("Your app is live at", published[1]);
-      } else if (ev.type === "error") {
-        closeAssistant();
-        tool?.done();
-        tool = null;
-        addNotice(ev.text, "error");
-      }
-    });
+    await post("/api/chat", { message });
   } catch (err) {
-    addNotice(`Connection lost: ${err}`, "error");
-  } finally {
-    closeAssistant();
-    tool?.done();
     setBusy(false);
     showRepo(repo);
-    input.focus();
+    addNotice(String(err), "error");
   }
 }
 
@@ -402,13 +480,11 @@ pushDialog.querySelector("form")!.onsubmit = async (e) => {
   e.preventDefault();
   const message = commitMessage.value.trim() || "Update from code agent";
   pushDialog.close();
-  setBusy(true);
-  setStatus("busy", `Pushing <strong>${escapeHtml(repo!)}</strong>…`);
+  setBusy(true, `Pushing <strong>${escapeHtml(repo!)}</strong>…`);
   try {
-    const { output } = await post<{ output: string }>("/api/push", { message });
-    addNotice(output.trim() || "Pushed to GitHub.", "ok");
-  } catch (err) {
-    addNotice(`Push failed: ${err}`, "error");
+    await post("/api/push", { message });
+  } catch {
+    // the server records the failure as a notice event
   } finally {
     setBusy(false);
     showRepo(repo);
@@ -437,42 +513,24 @@ publishDialog.querySelector("form")!.onsubmit = async (e) => {
   const service = serviceName.value.trim();
   if (!service || !repo) return;
   publishDialog.close();
-  setBusy(true);
-  setStatus("busy", `Publishing <strong>${escapeHtml(service)}</strong>…`);
-  const progress = addProgress(`Publishing ${service} to Cloud Run…`);
-  let url = null as string | null;
-  try {
-    const res = await fetch("/api/publish", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ service_name: service }),
-    });
-    if (res.status === 409) {
-      // No Dockerfile yet: let the agent add one and publish through its tool.
-      progress.step("The repository has no Dockerfile. Asking the agent to add one and publish…");
-      progress.done();
-      setBusy(false);
-      await runChat(
-        `Publish this app as the Cloud Run service "${service}": add a Dockerfile at the repository root if it is missing, then call the publish tool and tell me the public URL.`,
-      );
-      return;
-    }
-    if (!res.ok || !res.body) {
-      addNotice(await res.text(), "error");
-      return;
-    }
-    await readNdjson<PublishEvent>(res.body, (ev) => {
-      if (ev.type === "status") progress.step(ev.text);
-      else if (ev.type === "url") url = ev.url;
-      else if (ev.type === "error") addNotice(`Publish failed: ${ev.text}`, "error");
-    });
-    if (url) addUrlNotice("Your app is live at", url);
-  } catch (err) {
-    addNotice(`Publish failed: ${err}`, "error");
-  } finally {
-    progress.done();
+  setBusy(true, `Publishing <strong>${escapeHtml(service)}</strong>…`);
+  const res = await fetch("/api/publish", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ service_name: service }),
+  });
+  if (res.status === 409 && (await res.clone().text()).includes("no_dockerfile")) {
+    // No Dockerfile yet: let the agent add one and publish through its tool.
+    addNotice("The repository has no Dockerfile. Asking the agent to add one and publish…");
+    await sendMessage(
+      `Publish this app as the Cloud Run service "${service}": add a Dockerfile at the repository root if it is missing, then call the publish tool and tell me the public URL.`,
+    );
+    return;
+  }
+  if (!res.ok) {
     setBusy(false);
     showRepo(repo);
+    addNotice(`Publish failed: ${await res.text()}`, "error");
   }
 };
 
