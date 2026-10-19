@@ -3,7 +3,9 @@ import base64
 import json
 import os
 import re
+import signal
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -20,12 +22,18 @@ GCP_SA_KEY_B64 = os.environ.get("GCP_SA_KEY_B64", "")
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
 GITHUB_API = "https://api.github.com"
 DEPLOY_TIMEOUT = 15 * 60  # seconds to wait for GitHub Actions to finish a deploy
+BASH_TIMEOUT = int(os.environ.get("BASH_TIMEOUT", "300"))
 
 SYSTEM = (
     "You are a coding agent working inside a git repository checked out at {root}. "
     "Use the bash tool to explore the code and run commands, and the text editor tool "
     "to read and modify files. Every path must be inside {root}. "
     "Do not run git commit or git push yourself; the user pushes separately. "
+    "The bash tool runs each command in a fresh non-interactive /bin/sh with no job control, "
+    "so job specs like %1 do not work; use $! to reference a background process. A command "
+    "ends when its output closes, so to keep a server running across commands start it with "
+    "nohup and redirect its output to a file (nohup python app.py > server.log 2>&1 &); "
+    "background processes still attached to the output are killed when the command returns. "
     "When the user asks to publish or deploy the app, make sure the repository has a "
     "Dockerfile at its root that serves HTTP on the PORT environment variable, then call "
     "the publish tool, which pushes the branch, deploys through GitHub Actions, waits for "
@@ -178,14 +186,44 @@ class Agent:
     def _bash(self, inp: dict) -> str:
         if inp.get("restart"):
             return "shell restarted"
-        result = subprocess.run(
+        proc = subprocess.Popen(
             inp["command"], shell=True, cwd=self.root,
-            capture_output=True, text=True, timeout=300,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            start_new_session=True,  # own process group so stray children can be killed together
         )
-        out = result.stdout + result.stderr
-        if result.returncode != 0:
-            out += f"\n[exit code {result.returncode}]"
-        return out[-50_000:] or "(no output)"
+        chunks: list[bytes] = []
+
+        def pump() -> None:
+            while data := proc.stdout.read1(65536):
+                chunks.append(data)
+
+        reader = threading.Thread(target=pump, daemon=True)
+        reader.start()
+        note = ""
+        try:
+            proc.wait(timeout=BASH_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            note = f"[timed out after {BASH_TIMEOUT} seconds; the command and its background processes were killed]"
+        # Output closes only when every process holding it has exited. Give background
+        # processes a moment, then kill the whole group so the tool never hangs on them.
+        reader.join(timeout=0 if note else 2)
+        if reader.is_alive():
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            reader.join(timeout=5)
+            if not note:
+                note = ("[background processes still attached to the output were killed; to keep a "
+                        "server running across commands start it with nohup and redirect its output "
+                        "to a file, e.g. nohup python app.py > server.log 2>&1 &]")
+        returncode = proc.wait()
+        out = b"".join(chunks).decode(errors="replace").rstrip("\n")
+        if returncode != 0:
+            out += f"\n[exit code {returncode}]"
+        if note:
+            out += f"\n{note}"
+        return out[-50_000:].strip("\n") or "(no output)"
 
     def _editor(self, inp: dict) -> str:
         cmd = inp["command"]
