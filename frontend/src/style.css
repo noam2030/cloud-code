@@ -1,4 +1,29 @@
 :root {
+  --bg: #0f1115;
+  --surface: #171a21;
+  --surface-2: #1f232c;
+  --border: #2b303b;
+  --text: #e7e9ee;
+  --text-muted: #9aa1ae;
+  --text-faint: #6b7280;
+  --accent: #6366f1;
+  --accent-hover: #818cf8;
+  --accent-soft: #1e1f3a;
+  --accent-text: #c7d2fe;
+  --danger: #f87171;
+  --danger-soft: #2a1515;
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
+  --radius: 10px;
+  --radius-sm: 6px;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* Light palette, opt in with <html data-theme="light"> */
+:root[data-theme="light"] {
   --bg: #f6f7f9;
   --surface: #ffffff;
   --surface-2: #f0f1f4;
@@ -16,32 +41,6 @@
   --warning: #b45309;
   --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.1);
   --shadow-lg: 0 12px 32px rgba(16, 24, 40, 0.18);
-  --radius: 10px;
-  --radius-sm: 6px;
-  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0f1115;
-    --surface: #171a21;
-    --surface-2: #1f232c;
-    --border: #2b303b;
-    --text: #e7e9ee;
-    --text-muted: #9aa1ae;
-    --text-faint: #6b7280;
-    --accent: #6366f1;
-    --accent-hover: #818cf8;
-    --accent-soft: #1e1f3a;
-    --accent-text: #c7d2fe;
-    --danger: #f87171;
-    --danger-soft: #2a1515;
-    --success: #4ade80;
-    --warning: #fbbf24;
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.6);
-  }
 }
 
 * { box-sizing: border-box; }
