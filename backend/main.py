@@ -231,6 +231,54 @@ def chat(body: ChatBody):
     return {"ok": True}
 
 
+@app.post("/api/clear")
+def clear_chat():
+    """Forget the conversation on the server (and the agent's memory of it). The code is untouched."""
+    agent = current_agent()
+    require_idle()
+    agent.messages = []
+    transcript.reset(state["repo"])
+    return {"ok": True}
+
+
+def remove_code(root: Path) -> int:
+    """Delete every file in the checkout except .git and .github/workflows. Returns the file count."""
+    removed = 0
+    for entry in root.iterdir():
+        if entry.name == ".git":
+            continue
+        if entry.name == ".github":
+            for sub in entry.iterdir():
+                if sub.name == "workflows":
+                    continue
+                removed += sum(1 for p in sub.rglob("*") if p.is_file()) if sub.is_dir() else 1
+                shutil.rmtree(sub) if sub.is_dir() else sub.unlink()
+            continue
+        if entry.is_dir() and not entry.is_symlink():
+            removed += sum(1 for p in entry.rglob("*") if p.is_file())
+            shutil.rmtree(entry)
+        else:
+            removed += 1
+            entry.unlink()
+    return removed
+
+
+@app.post("/api/reset")
+def reset_repo():
+    """Remove all code from the checkout, keeping the GitHub workflow, and clear the conversation.
+    Nothing is pushed until the user pushes."""
+    agent = current_agent()
+    require_idle()
+    removed = remove_code(agent.root)
+    agent.messages = []
+    transcript.reset(state["repo"])
+    transcript.append({"type": "notice", "kind": "ok", "text": (
+        f"Repository reset: removed {removed} files, kept .github/workflows. "
+        "Build the new app, then push to replace the old one on GitHub."
+    )})
+    return {"ok": True, "removed": removed}
+
+
 @app.post("/api/push", status_code=202)
 def push(body: PushBody):
     """Commit and push. If the repository deploys through GitHub Actions, the deploy is followed

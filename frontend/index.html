@@ -39,6 +39,11 @@
         <span class="status-dot" aria-hidden="true"></span>
         <span id="status-text">No repository selected</span>
       </div>
+
+      <div class="topbar-actions">
+        <button id="clear" class="btn btn-ghost" title="Forget the conversation; keep the code">Clear chat</button>
+        <button id="reset" class="btn btn-ghost btn-danger" title="Remove all code; keep the GitHub workflow">Reset repo</button>
+      </div>
     </header>
 
     <main class="workspace">
@@ -79,6 +84,28 @@
         <div class="dialog-actions">
           <button type="button" class="btn" data-close>Cancel</button>
           <button type="submit" class="btn btn-primary">Commit and push</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="clear-dialog" class="dialog">
+      <form method="dialog" class="dialog-form">
+        <h2>Clear chat</h2>
+        <p class="dialog-text">Forget this conversation on the server, including the agent's memory of it, on every device. The code in the repository is not touched.</p>
+        <div class="dialog-actions">
+          <button type="button" class="btn" data-close>Cancel</button>
+          <button type="submit" class="btn btn-primary">Clear chat</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="reset-dialog" class="dialog">
+      <form method="dialog" class="dialog-form">
+        <h2>Reset repository</h2>
+        <p class="dialog-text">Delete every file in the checkout except the GitHub workflow in <code>.github/workflows</code>, and clear the conversation. Nothing is pushed until you push; the next push replaces the old app on GitHub.</p>
+        <div class="dialog-actions">
+          <button type="button" class="btn" data-close>Cancel</button>
+          <button type="submit" class="btn btn-primary btn-danger-primary">Delete code and reset</button>
         </div>
       </form>
     </dialog>

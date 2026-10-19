@@ -173,6 +173,14 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 }
 .btn-primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
 
+.btn-ghost { background: transparent; border-color: transparent; color: var(--text-muted); padding: 0 10px; }
+.btn-ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+.btn-ghost.btn-danger:hover:not(:disabled) { color: var(--danger); }
+.btn-danger-primary { background: var(--danger); border-color: var(--danger); }
+.btn-danger-primary:hover:not(:disabled) { background: var(--danger); border-color: var(--danger); filter: brightness(1.1); }
+.topbar-actions { display: flex; gap: 2px; }
+.dialog-text code { font-family: var(--mono); font-size: 12px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+
 /* ---------- Status ---------- */
 
 .status {
@@ -488,6 +496,7 @@ kbd {
   .select-wrap, .select-wrap select, input { width: 100%; max-width: none; }
   .divider { display: none; }
   .status { align-self: flex-start; max-width: 100%; }
+  .topbar-actions { justify-content: flex-end; margin-top: -4px; }
   .workspace { padding: 0 12px; }
   .hint { display: none; }
   .composer-buttons { width: 100%; justify-content: flex-end; }

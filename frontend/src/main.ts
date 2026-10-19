@@ -11,6 +11,10 @@ const pushBtn = $<HTMLButtonElement>("push");
 const selectBtn = $<HTMLButtonElement>("select");
 const createBtn = $<HTMLButtonElement>("create");
 const newName = $<HTMLInputElement>("newname");
+const clearBtn = $<HTMLButtonElement>("clear");
+const resetBtn = $<HTMLButtonElement>("reset");
+const clearDialog = $<HTMLDialogElement>("clear-dialog");
+const resetDialog = $<HTMLDialogElement>("reset-dialog");
 const pushDialog = $<HTMLDialogElement>("push-dialog");
 const commitMessage = $<HTMLInputElement>("commit-message");
 
@@ -64,6 +68,8 @@ function updateControls() {
   pushBtn.disabled = busy || !repo;
   selectBtn.disabled = busy;
   createBtn.disabled = busy;
+  clearBtn.disabled = busy || !repo;
+  resetBtn.disabled = busy || !repo;
   input.disabled = busy || !repo;
   input.placeholder = repo ? "Describe what you want the agent to do…" : "Open or create a repository to get started";
 }
@@ -461,6 +467,34 @@ async function sendMessage(message: string) {
     addNotice(String(err), "error");
   }
 }
+
+// ---------- Clear chat / reset repository ----------
+
+/** Wire a confirmation dialog to a server action. The server answers with a reset event
+ *  that clears the conversation on every connected device. */
+function confirmAction(button: HTMLButtonElement, dialog: HTMLDialogElement, url: string, label: string) {
+  button.onclick = () => {
+    if (!repo || busy) return;
+    dialog.showModal();
+  };
+  dialog.querySelector<HTMLButtonElement>("[data-close]")!.onclick = () => dialog.close("cancel");
+  dialog.querySelector("form")!.onsubmit = async (e) => {
+    e.preventDefault();
+    dialog.close();
+    setBusy(true, `${label}…`);
+    try {
+      await post(url, {});
+    } catch (err) {
+      addNotice(String(err), "error");
+    } finally {
+      setBusy(false);
+      showRepo(repo);
+    }
+  };
+}
+
+confirmAction(clearBtn, clearDialog, "/api/clear", "Clearing chat");
+confirmAction(resetBtn, resetDialog, "/api/reset", "Resetting repository");
 
 // ---------- Push ----------
 
