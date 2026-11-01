@@ -1,9 +1,8 @@
 #!/bin/sh
 # Deploy to Cloud Run using the same values as backend/.env (secrets go to Secret Manager).
-# Usage: FRONTEND_ORIGIN=https://<app>.vercel.app ./deploy.sh
+# Usage: ./deploy.sh   (all config from backend/.env)
 set -e
 cd "$(dirname "$0")"
-ORIGIN=${FRONTEND_ORIGIN:-http://localhost:5173}
 set -a; . ./.env; set +a
 PROJECT=$(gcloud config get-value project)
 REGION=${REGION:-us-central1}
@@ -23,4 +22,9 @@ put_secret cloud-code-app-token "$APP_TOKEN"
 gcloud run deploy cloud-code --source . --region "$REGION" --allow-unauthenticated \
   --max-instances=1 --timeout=3600 --memory=2Gi \
   --set-secrets=OPENAI_API_KEY=cloud-code-openai-key:latest,GITHUB_TOKEN=cloud-code-github-token:latest,APP_TOKEN=cloud-code-app-token:latest \
-  --set-env-vars="WORK_REPO=$WORK_REPO,OPENAI_MODEL=$OPENAI_MODEL,FRONTEND_ORIGIN=$ORIGIN"
+  --set-env-vars="^|^WORK_REPO=$WORK_REPO|OPENAI_MODEL=$OPENAI_MODEL|FRONTEND_ORIGIN=$FRONTEND_ORIGIN"
+
+# UI deploys (GitHub Actions -> Vercel) need the Vercel token as a GitHub secret
+if [ -n "$VERCEL_TOKEN" ]; then
+  printf %s "$VERCEL_TOKEN" | env -u GITHUB_TOKEN gh secret set VERCEL_TOKEN --repo "$(git remote get-url origin | sed -E 's#.*github.com[:/](.*)\.git#\1#')"
+fi
