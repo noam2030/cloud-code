@@ -1,0 +1,42 @@
+# Lives in noam2030/cloud-code-work-dir/.github/workflows/deploy.yml (survives "Reset repo").
+name: Deploy to Cloud Run
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # for Workload Identity Federation
+
+concurrency:
+  group: deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skip if repo has no app code (e.g. after reset)
+        id: check
+        run: |
+          if [ -z "$(git ls-files | grep -v '^\.github/')" ]; then
+            echo "No app code, skipping deploy."; echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.check.outputs.skip != 'true'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_SA }}
+
+      - if: steps.check.outputs.skip != 'true'
+        uses: google-github-actions/setup-gcloud@v2
+
+      - if: steps.check.outputs.skip != 'true'
+        run: |
+          gcloud run deploy cloud-code-work-dir --source . \
+            --project "${{ vars.GCP_PROJECT }}" --region "${{ vars.GCP_REGION }}" \
+            --allow-unauthenticated --quiet
