@@ -13,10 +13,11 @@ jobs:
     runs-on: ubuntu-latest
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: team_abCCfq6oAKpFKOLdLU0hsGg5 # not secret
+      VERCEL_PROJECT_ID: prj_Ak4Fstp8T4d47dS3wjazGyIvfpZR # cloud-code-ui
     steps:
       - uses: actions/checkout@v4
       - run: npm i -g vercel
-      - run: vercel link --yes --project cloud-code-ui --token "$VERCEL_TOKEN"
       - run: vercel pull --yes --environment=production --token "$VERCEL_TOKEN"
       - run: vercel build --prod --token "$VERCEL_TOKEN"
       - run: vercel deploy --prebuilt --prod --token "$VERCEL_TOKEN"
