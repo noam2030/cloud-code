@@ -16,11 +16,11 @@ put_secret() {  # name value
   printf %s "$2" | gcloud secrets versions add "$1" --data-file=-
   gcloud secrets add-iam-policy-binding "$1" --member="serviceAccount:$SA" --role=roles/secretmanager.secretAccessor >/dev/null
 }
-put_secret openai-key "$OPENAI_API_KEY"
-put_secret github-token "$GITHUB_TOKEN"
-put_secret app-token "$APP_TOKEN"
+put_secret cloud-code-openai-key "$OPENAI_API_KEY"
+put_secret cloud-code-github-token "$GITHUB_TOKEN"
+put_secret cloud-code-app-token "$APP_TOKEN"
 
 gcloud run deploy cloud-code --source . --region "$REGION" --allow-unauthenticated \
   --max-instances=1 --timeout=3600 --memory=2Gi \
-  --set-secrets=OPENAI_API_KEY=openai-key:latest,GITHUB_TOKEN=github-token:latest,APP_TOKEN=app-token:latest \
+  --set-secrets=OPENAI_API_KEY=cloud-code-openai-key:latest,GITHUB_TOKEN=cloud-code-github-token:latest,APP_TOKEN=cloud-code-app-token:latest \
   --set-env-vars="WORK_REPO=$WORK_REPO,OPENAI_MODEL=$OPENAI_MODEL,FRONTEND_ORIGIN=$ORIGIN"
